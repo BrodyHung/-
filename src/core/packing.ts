@@ -1,16 +1,23 @@
 import {type Config, type Point,validate} from './model';
-import {hex,inset,rectangle,fits,bounds,transform,overlaps,area,bodyArea,EPS} from './geometry';
+import {hex,inset,rectangle,fits,bounds,transform,overlaps,area,bodyArea,EPS,packageSupport,minimumRect,envelope,rad} from './geometry';
 import {materialEstimate} from './materials';
 export type Cell={center:Point;polygon:Point[];inner:Point[];rotated:boolean};
 export type Result={kind:'hex'|'grid';theta:number;cells:Cell[];layers:number;count:number;rows:number;cols:number;rotated:boolean;packageRotated:boolean;innerArea:number;wallLength:number;theoretical:number;cutArea:number;stockArea:number;perItem:number|null;occupiedVolume:number;density:number;boxUtil:number;cellUtil:number;usedLength:number;usedWidth:number;remainingLength:number;remainingWidth:number;tabs:Point[][];pieces:{length:number;height:number;quantity:number;area:number}[];reason:string;pattern:string};
 export function geometry(c:Config,theta=c.theta){
+ if(c.snug){
+  const angle=rad(theta),margin=c.cushion+c.clearance+c.thickness/2;
+  const v=packageSupport(c,0,1)+margin,s=v/Math.sin(angle);
+  const a=Math.max(1e-4,2*(packageSupport(c,Math.sin(angle),Math.cos(angle))+margin-v*Math.cos(angle))/Math.sin(angle));
+  return {...hex(a,s,theta),a,s};
+ }
  let s=c.s;
  const perimeter=c.bagPerimeter||2*(c.bagLength+c.bagWidth);
  if(c.perimeterCandidate&&perimeter>0)s=(perimeter-2*c.a)/4;
  if(c.control==='width')s=(c.targetWidth-c.a)/(2*Math.cos(theta*Math.PI/180));
  if(c.control==='height')s=c.targetHeight/(2*Math.sin(theta*Math.PI/180));
- return hex(c.a,s,theta);
+ return {...hex(c.a,s,theta),a:c.a,s};
 }
+export function rectGeometry(c:Config){return c.snug?minimumRect(c):{length:c.rectLength,width:c.rectWidth}}
 function empty(kind:'hex'|'grid',theta:number,reason:string):Result{return {kind,theta,cells:[],layers:0,count:0,rows:0,cols:0,rotated:false,packageRotated:false,innerArea:0,wallLength:0,theoretical:0,cutArea:0,stockArea:0,perItem:null,occupiedVolume:0,density:0,boxUtil:0,cellUtil:0,usedLength:0,usedWidth:0,remainingLength:0,remainingWidth:0,tabs:[],pieces:[],reason,pattern:'規則排列搜尋結果'}}
 function finish(c:Config,r:Result,height:number,t:number,extra:number){
  const layerHeight=Math.max(height,c.T+2*(c.cushion+c.clearance));
@@ -32,10 +39,10 @@ function finish(c:Config,r:Result,height:number,t:number,extra:number){
 export function pack(c:Config,kind:'hex'|'grid',theta=c.theta):Result{
  const errors=validate(c);if(errors.length)return empty(kind,theta,errors.join('；'));
  const t=kind==='hex'?c.thickness:c.rectThickness,h=kind==='hex'?c.height:c.rectHeight;
- const g=geometry(c,theta);const base=kind==='hex'?g.points:rectangle(c.rectLength+t,c.rectWidth+t);
- if(kind==='hex'&&(!Number.isFinite(g.width)||g.width<=c.a||g.height<=0))return empty(kind,theta,'候選尺寸退化，請檢查主要控制參數或周長');
+ const g=geometry(c,theta),rect=rectGeometry(c);const base=kind==='hex'?g.points:rectangle(rect.length+t,rect.width+t);
+ if(kind==='hex'&&(!Number.isFinite(g.width)||g.width<=g.a||g.height<=0))return empty(kind,theta,'候選尺寸退化，請檢查主要控制參數或周長');
  const inner=inset(base,t/2);const pr=[false,...(c.rotate?[true]:[])].find(rotate=>fits(c,inner,rotate));
- if(pr===undefined)return empty(kind,theta,c.bagLength<=0||c.bagWidth<=0?'僅憑周長無法確認醫材能否放入，請補充滅菌袋長寬。':'本體或完整袋材輪廓超出安全淨空，無可行解');
+ if(pr===undefined)return empty(kind,theta,!envelope(c).known?(c.packageProfile==='flat'?'僅憑周長無法確認醫材能否放入，請補充滅菌袋長寬。':'請輸入單側堆積餘料延伸，或提供袋長以產生候選輪廓；無可行解'):'本體或袋材包絡輪廓超出安全淨空，無可行解');
  let best=empty(kind,theta,'外箱邊界或定位片空間不足，無可行排列');
  for(const rotated of [false,...(c.rotate?[true]:[])]){
   const oriented=transform(base,0,0,rotated),ib=transform(inner,0,0,rotated),b=bounds(oriented),w=b.maxX-b.minX,hh=b.maxY-b.minY;
@@ -45,7 +52,7 @@ export function pack(c:Config,kind:'hex'|'grid',theta=c.theta):Result{
   const outerBounds=bounds(inset(oriented,-t/2));
   // Canonical tiling plus disjoint bounding-grid family; finite offset samples.
   const patterns=kind==='grid'?[{dx:w,dy:hh,off:0,label:'矩形網格'}]:[
-   {dx:rotated?w:g.width-(g.width-c.a)/2,dy:rotated?g.height-(g.height-c.a)/2:g.height,off:0.5,label:'共邊蜂巢'},
+   {dx:rotated?w:g.width-(g.width-g.a)/2,dy:rotated?g.height-(g.height-g.a)/2:g.height,off:0.5,label:'共邊蜂巢'},
    {dx:w+(c.shared?0:t),dy:hh+(c.shared?0:t),off:0,label:'直列'},
    {dx:w+(c.shared?0:t),dy:hh+(c.shared?0:t),off:c.offset,label:'自訂錯位'}];
   // Rotated canonical lattice is generated in source coordinates below.
@@ -57,7 +64,7 @@ export function pack(c:Config,kind:'hex'|'grid',theta=c.theta):Result{
    const maxC=kind==='hex'?c.cols:c.rectVertical+1,maxR=kind==='hex'?c.rows:c.rectHorizontal+1;
    for(let col=0;col<maxC;col++)for(let row=0;row<maxR;row++){
     let x=left-outerBounds.minX+col*pattern.dx,y=top-outerBounds.minY+row*pattern.dy+(col%2)*pattern.off*hh;
-    if(rotated&&pattern.label==='共邊蜂巢'){x=left-outerBounds.minX+row*g.height+(col%2)*g.height/2;y=top-outerBounds.minY+col*(c.a+(g.width-c.a)/2)}
+    if(rotated&&pattern.label==='共邊蜂巢'){x=left-outerBounds.minX+row*g.height+(col%2)*g.height/2;y=top-outerBounds.minY+col*(g.a+(g.width-g.a)/2)}
     const p=transform(oriented,x,y),physical=inset(p,-t/2);
     const physicalBounds=bounds(physical);
     if(physicalBounds.minX<left-EPS||physicalBounds.maxX>right+EPS||physicalBounds.minY<top-EPS||physicalBounds.maxY>bottom+EPS)continue;

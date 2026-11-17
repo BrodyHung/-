@@ -2,6 +2,7 @@ export type Point = { x: number; y: number };
 export type Shape = 'circle' | 'rounded' | 'rectangle';
 export type Objective = 'count' | 'material' | 'volume';
 export type Config = {
+  packageProfile:'gathered'|'flat'; snug:boolean;
   D:number; T:number; bodyWidth:number; radius:number; shape:Shape;
   bagLength:number; bagWidth:number; bagPerimeter:number; perimeterCandidate:boolean;
   extensionMode:'auto'|'manual'; extension:number; cushion:number; clearance:number;
@@ -12,7 +13,7 @@ export type Config = {
   boxLength:number; boxWidth:number; boxHeight:number; boxGap:number; rotate:boolean; multilayer:boolean;
   minAngle:number; maxAngle:number; step:number; objective:Objective;
 };
-export const defaults:Config={D:90,T:180,bodyWidth:72,radius:15,shape:'circle',bagLength:140,bagWidth:96,bagPerimeter:0,perimeterCandidate:false,extensionMode:'auto',extension:25,cushion:2,clearance:2,a:110,s:100,theta:55,control:'angle',targetWidth:180,targetHeight:120,thickness:3,height:190,extraArea:120,returnArea:0,tabLength:12,tabWidth:35,tabCount:4,rows:12,cols:12,offset:0.5,shared:true,waste:10,rectLength:148,rectWidth:104,rectThickness:3,rectHeight:190,rectHorizontal:11,rectVertical:11,rectExtra:120,boxLength:600,boxWidth:450,boxHeight:410,boxGap:5,rotate:true,multilayer:true,minAngle:20,maxAngle:70,step:2,objective:'count'};
+export const defaults:Config={packageProfile:'gathered',snug:true,D:90,T:180,bodyWidth:72,radius:15,shape:'circle',bagLength:140,bagWidth:96,bagPerimeter:0,perimeterCandidate:false,extensionMode:'manual',extension:25,cushion:2,clearance:2,a:110,s:100,theta:55,control:'angle',targetWidth:180,targetHeight:120,thickness:3,height:190,extraArea:120,returnArea:0,tabLength:12,tabWidth:35,tabCount:4,rows:12,cols:12,offset:0.5,shared:true,waste:10,rectLength:148,rectWidth:104,rectThickness:3,rectHeight:190,rectHorizontal:11,rectVertical:11,rectExtra:120,boxLength:600,boxWidth:450,boxHeight:410,boxGap:5,rotate:true,multilayer:true,minAngle:20,maxAngle:70,step:2,objective:'count'};
 export function validate(c:Config):string[]{
  const errors:string[]=[];
  for(const [key,value] of Object.entries(defaults)) if(typeof value==='number'){
@@ -27,12 +28,16 @@ export function validate(c:Config):string[]{
  if((c.maxAngle-c.minAngle)/c.step>250) errors.push('角度搜尋最多 251 組，請增加間隔');
  if(c.shape!=='circle'&&c.bodyWidth<=0) errors.push('長方形本體寬度必須大於 0');
  if(!['circle','rounded','rectangle'].includes(c.shape)||!['angle','width','height'].includes(c.control)||!['count','material','volume'].includes(c.objective)||!['auto','manual'].includes(c.extensionMode)) errors.push('不支援的選項');
- for(const k of ['shared','rotate','multilayer','perimeterCandidate'] as const) if(typeof c[k]!=='boolean') errors.push(`${k} 必須為布林值`);
+ if(!['gathered','flat'].includes(c.packageProfile))errors.push('不支援的包裝輪廓');
+ for(const k of ['shared','rotate','multilayer','perimeterCandidate','snug'] as const) if(typeof c[k]!=='boolean') errors.push(`${k} 必須為布林值`);
  return errors;
 }
 export function importConfig(data:unknown):Config{
  if(!data||typeof data!=='object') throw Error('設定格式錯誤');
  const obj=data as Record<string,unknown>; const source=(obj.config??obj) as Record<string,unknown>;
  const c={...defaults}; for(const k of Object.keys(defaults) as (keyof Config)[]) if(k in source) Object.assign(c,{[k]:source[k]});
+ // Legacy exports described a flat rectangular bag and fixed CAD dimensions.
+ if(!('packageProfile' in source))c.packageProfile='flat';
+ if(!('snug' in source))c.snug=false;
  const e=validate(c); if(e.length) throw Error(e.join('；')); return c;
 }

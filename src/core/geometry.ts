@@ -29,21 +29,40 @@ export function body(c:Config):Point[]{
  for(let k=0;k<4;k++) for(let j=0;j<=16;j++){const angle=(-90+k*90+j*90/16)*Math.PI/180; const cx=k===0||k===1?w/2-r:-w/2+r,cy=k<2?(k===0?-h/2+r:h/2-r):(k===2?h/2-r:-h/2+r);result.push({x:cx+r*Math.cos(angle),y:cy+r*Math.sin(angle)})}return result;
 }
 export function bodyArea(c:Config){if(c.shape==='circle')return Math.PI*c.D*c.D/4;const r=c.shape==='rounded'?Math.min(c.radius,c.D/2,c.bodyWidth/2):0;return c.D*c.bodyWidth-(4-Math.PI)*r*r}
+export function bodySupport(c:Config,nx:number,ny:number){
+ const w=c.D,h=c.shape==='circle'?c.D:c.bodyWidth;
+ const r=c.shape==='circle'?c.D/2:c.shape==='rounded'?Math.min(c.radius,w/2,h/2):0;
+ return (w/2-r)*Math.abs(nx)+(h/2-r)*Math.abs(ny)+r*Math.hypot(nx,ny);
+}
+export function sideExtension(c:Config){return c.extensionMode==='manual'?c.extension:Math.max(0,(c.bagLength-c.D)/2)}
+export function convexHull(points:Point[]):Point[]{
+ const sorted=[...points].sort((a,b)=>a.x-b.x||a.y-b.y);
+ const half=(ps:Point[])=>{const result:Point[]=[];for(const p of ps){while(result.length>=2&&cross(result.at(-2)!,result.at(-1)!,p)<=EPS)result.pop();result.push(p)}return result};
+ const lower=half(sorted),upper=half([...sorted].reverse());return [...lower.slice(0,-1),...upper.slice(0,-1)];
+}
 export function envelope(c:Config){
+ if(c.packageProfile==='gathered'){
+  const extension=sideExtension(c),tip=c.D/2+extension;
+  const known=c.extensionMode==='manual'||c.bagLength>0;
+  const points=known?convexHull([...body(c),{x:-tip,y:0},{x:tip,y:0}]):[];
+  return {known,length:c.D+2*extension,width:c.shape==='circle'?c.D:c.bodyWidth,points};
+ }
  const known=c.bagLength>0&&c.bagWidth>0;
  const length=known?Math.max(c.bagLength,c.D+(c.extensionMode==='manual'?2*c.extension:0)):0;
  return {known,length,width:c.bagWidth,points:known?rectangle(length,c.bagWidth):[]};
 }
+// Exact support of convex(body + two side tips), or the legacy flat rectangle.
+export function packageSupport(c:Config,nx:number,ny:number){
+ if(c.packageProfile==='gathered')return Math.max(bodySupport(c,nx,ny),(c.D/2+sideExtension(c))*Math.abs(nx));
+ const bag=envelope(c);return Math.max(bodySupport(c,nx,ny),bag.length/2*Math.abs(nx)+bag.width/2*Math.abs(ny));
+}
+export function minimumRect(c:Config){const margin=2*(c.cushion+c.clearance);return {length:2*packageSupport(c,1,0)+margin,width:2*packageSupport(c,0,1)+margin}}
 export function fits(c:Config,inner:Point[],rotate=false){
  const bag=envelope(c); if(!bag.known)return false;
  const safe=inset(inner,c.cushion+c.clearance); if(safe.length<3)return false;
- const p=transform(bag.points,0,0,rotate);
- // Exact support function for circle / rectangle / rounded rectangle;
- // sampled curves are used only for drawing, never to certify clearance.
- const w=rotate&&c.shape!=='circle'?c.bodyWidth:c.D, h=c.shape==='circle'?c.D:rotate?c.D:c.bodyWidth;
- const r=c.shape==='circle'?c.D/2:c.shape==='rounded'?Math.min(c.radius,w/2,h/2):0;
- const bodyFits=safe.every((a,i)=>{const b=safe[(i+1)%safe.length],len=Math.hypot(b.x-a.x,b.y-a.y),nx=-(b.y-a.y)/len,ny=(b.x-a.x)/len;return cross(a,b,{x:0,y:0})/len>=(w/2-r)*Math.abs(nx)+(h/2-r)*Math.abs(ny)+r-EPS});
- return bodyFits&&contains(safe,p);
+ // Inverse-rotate edge normals into package coordinates. This includes exact
+ // curved-body support; sampled drawing outlines never certify a fit.
+ return safe.every((a,i)=>{const b=safe[(i+1)%safe.length],len=Math.hypot(b.x-a.x,b.y-a.y),nx=-(b.y-a.y)/len,ny=(b.x-a.x)/len;return cross(a,b,{x:0,y:0})/len>=packageSupport(c,rotate?ny:nx,rotate?-nx:ny)-EPS});
 }
 export type Segment=[Point,Point];
 export function edges(p:Point[]):Segment[]{return p.map((a,i)=>[a,p[(i+1)%p.length]])}
